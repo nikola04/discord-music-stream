@@ -1,0 +1,22 @@
+{
+  "name": "djpatak-player",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@discordjs/opus": "^0.9.0",
+    "@discordjs/voice": "^0.16.1",
+    "@types/node": "^20.11.17",
+    "@types/redis": "^4.0.11",
+    "ffmpeg-static": "^5.2.0",
+    "redis": "^4.6.13"
+  }
+}
