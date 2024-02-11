@@ -1,12 +1,29 @@
 import { Readable } from 'node:stream'
 import { IncomingMessage } from 'node:http';
 import { request_stream } from '../Request';
+import { StreamType } from '@discordjs/voice';
 
-export enum StreamType {
-    OggOpus = 'ogg/opus',
-    Arbitrary = 'arbitrary'
+export class SoundcloudTrack {
+    id: number;
+    title: string;
+    url: string;
+    thumbnail_url: string;
+    duration: number;
+    formats: any[];
+    type: 'track' | 'playlist'
+
+    constructor(data: any){
+        this.id = data.id;
+        this.title = data.title;
+        this.url = data.permalink_url;
+        this.thumbnail_url = data.artwork_url;
+        this.duration = data.duration;
+        this.type = 'track';
+        this.formats = data.media.transcodings
+    }
 }
 
+// cheated for this... :(
 export class SoundcloudStream {
     stream: Readable;
     type: StreamType;
@@ -122,47 +139,6 @@ export class SoundcloudStream {
     }
 }
 
-export interface SoundcloudTrackJSON{
-    id: number;
-    title: string;
-    url: string;
-    thumbnail_url: string;
-    duration: number;
-    formats: string[];
-    type: 'track' | 'playlist'
-}
-
-export class SoundcloudTrack {
-    id: number;
-    title: string;
-    url: string;
-    thumbnail_url: string;
-    duration: number;
-    formats: any[];
-    type: 'track' | 'playlist'
-
-    constructor(data: any){
-        this.id = data.id;
-        this.title = data.title;
-        this.url = data.permalink_url;
-        this.thumbnail_url = data.artwork_url;
-        this.duration = data.duration;
-        this.type = 'track';
-        this.formats = data.media.transcodings
-    }
-
-    public toJSON(): SoundcloudTrackJSON{
-        return ({
-            id: this.id,
-            title: this.title,
-            url: this.url,
-            formats: this.formats,
-            duration: this.duration,
-            type: this.type,
-            thumbnail_url: this.thumbnail_url,
-        });
-    }
-}
 
 export class Timer {
     /**
