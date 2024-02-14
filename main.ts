@@ -5,6 +5,8 @@ import { DiscordUser, QueueTrack } from './src/classes/queue';
 import { anonymRequest, ResponseType } from './src/functions/request';
 import { PlayerEvent, PlayerEvents } from './src/classes/events';
 
+const SOUNDCLOUD_URL_REGEX: RegExp = /^(https?:\/\/)?(www.)?(m\.)?soundcloud\.com\/[\w\-\.]+(\/)+[\w\-\.]+/;
+
 let redis_cli: RedisClientType | null = null;
 
 interface SearchOptions{
@@ -145,7 +147,7 @@ export class Player{
         return queue_track;
     }
     public setRepeat(repeat: Repeat): boolean{
-        if(this.repeat === repeat) return false;
+        if(this.repeat == repeat) return false;
         this.repeat = repeat;
         return true;
     }
@@ -309,6 +311,7 @@ export class SoundCloud{
      * @returns Array of SoundcloudTrack objects or SoundcloudTrack object if limit is set to 1
      */
     public async search(query: string, options: SearchOptions|null): Promise<SoundcloudTrack[]|SoundcloudTrack|null>{
+        if(query.match(SOUNDCLOUD_URL_REGEX)) return await this.track(query);
         if(this.sc_id == null) return null;
         const url = new URL("https://api-v2.soundcloud.com/search/tracks");
         url.searchParams.set('q', query);
