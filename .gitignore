@@ -1,4 +1,5 @@
 .env
+notes.txt
 *.js
 *.log
 package-lock.json

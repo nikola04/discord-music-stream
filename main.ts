@@ -21,6 +21,10 @@ export enum PlayerEvent{
     BotDisconnect
 }
 
+interface QueueTrackExt extends QueueTrack{
+    active: boolean
+}
+
 class PlayerEvents{
     // events
     public queue_end: () => void;
@@ -115,7 +119,7 @@ export class Player{
         this.queue_track = -1;
         this.disconnect_timeout = null;
         this.events = new PlayerEvents();
-        this.state = PlayerState.Idle;
+        this.state = PlayerState.Stopped;
         this.audio_player = createAudioPlayer({
             behaviors: {
                 noSubscriber: NoSubscriberBehavior.Pause,
@@ -143,19 +147,101 @@ export class Player{
             this.playNext()
         })
         this.resource = null;
+        redis_cli?.del(`queue:${this.id}`);
     }
     public addListener(event: AudioPlayerStatus, func: () => void):void{
         this.audio_player?.addListener(event, func);
     }
+    private async queueLen(): Promise<number>{
+        if(!redis_cli) return 0;
+        const queue_tracks_raw: string[] = await redis_cli.lRange(`queue:${this.id}`, 0, -1);
+        return queue_tracks_raw.length | 0;
+    }
+    public async queue(): Promise<null|QueueTrackExt[]>{
+        if(!redis_cli) return null;
+        const queue_tracks_raw: undefined|string[] = await redis_cli.lRange(`queue:${this.id}`, 0, -1);
+        if(!queue_tracks_raw) return null;
+        const tracks: QueueTrackExt[] = [];
+        queue_tracks_raw.forEach((track: string, ind: number) => {
+            const queue_track: QueueTrack = JSON.parse(track);
+            tracks.push({
+                ...queue_track,
+                active: this.queue_track === ind
+            });
+        })   
+        return tracks;
+    }
+    public async isValidTrackId(track_id: number): Promise<null|QueueTrack>{
+        if(!redis_cli) return null;
+        const queue_track_raw_arr: string[] = await redis_cli.lRange(`queue:${this.id}`, track_id, track_id);
+        if(queue_track_raw_arr.length == 0) return null;
+        const queue_track: QueueTrack = JSON.parse(queue_track_raw_arr[0]);
+        return queue_track;
+    }
+    public async queueRem(track_id: number): Promise<boolean>{
+        if(!redis_cli) return false;
+        await redis_cli.lSet(`queue:${this.id}`, track_id, "DELETEDTRACK")
+        await redis_cli.lRem(`queue:${this.id}`, 1, "DELETEDTRACK");
+        if(track_id <= this.queue_track) this.queue_track--;
+        return true;
+    }
+    public async queueClear(): Promise<boolean>{
+        if(!redis_cli) return false;
+        const queue_len = await this.queueLen()
+        if(queue_len < 1) return false;
+        await redis_cli.lTrim(`queue:${this.id}`, queue_len, 0);
+        return true;
+    }
+    private async getQueueTrack(): Promise<null|QueueTrack>{
+        if(!redis_cli) return null;
+        const queue_track_raw: string[] = await redis_cli?.lRange(`queue:${this.id}`, this.queue_track, this.queue_track);
+        if(queue_track_raw.length == 0){
+            // queue has ended
+            this.state = PlayerState.Stopped;
+            this.audio_player?.stop()
+            this.events?.queue_end();
+            return null;
+        }
+        const queue_track: QueueTrack = JSON.parse(queue_track_raw[0]);
+        return queue_track;
+    }
+    public pause(): boolean{
+        if(this.state !== PlayerState.Playing) return false;
+        if(this.audio_player == null) return false;
+        this.audio_player.pause();
+        return true;
+    }
+    public resume(): boolean{
+        if(this.state !== PlayerState.Paused) return false;
+        if(this.audio_player == null) return false;
+        this.audio_player.unpause();
+        return true;
+    }
+    public stop(): boolean{
+        if(this.state !== PlayerState.Playing) return false;
+        if(this.audio_player == null) return false;
+        this.state = PlayerState.Stopped;
+        this.audio_player.stop();
+        return true;
+    }
+    public async skip(): Promise<boolean>{
+        const queue_len = await this.queueLen()
+        if(this.state === PlayerState.Stopped && this.queue_track >= queue_len - 1) return false
+        return await this.playNext(true)
+    }
     public async play(track: SoundcloudTrack, stream: SoundcloudStream, user: DiscordUser): Promise<boolean>{
         // adding to queue
-        const key = `queue:${this.id}`;
-        const queue_track: QueueTrack = new QueueTrack(track, user);
+        const key: string = `queue:${this.id}`;
+        const queue_track: null|QueueTrack = new QueueTrack(track, user);
         const track_id: number|undefined = await redis_cli?.rPush(key, JSON.stringify(queue_track));
         // if not playing anything, play added song
-        if(this.state == PlayerState.Playing || this.state == PlayerState.Paused) return false;
-        if(this.audio_player == null) return false;
+        if(this.state != PlayerState.Stopped) return false;
         this.queue_track = (track_id != undefined && track_id > 0) ? (track_id - 1) : 0;
+        return this.playStream(stream)
+    }
+    private playStream(stream: SoundcloudStream){
+        if(this.audio_player == null) return false;
+        this.resource = null;
         this.resource = createAudioResource(stream.stream, {
             inputType: stream.type,
             //inlineVolume: true
@@ -164,32 +250,40 @@ export class Player{
         this.audio_player.play(this.resource)
         return true
     }
-    public async playNext(): Promise<boolean>{
-        if(this.state == PlayerState.Stopped) return false;
-        this.queue_track++;
-        const queue_track_raw: undefined|string[] = await redis_cli?.lRange(`queue:${this.id}`, this.queue_track, this.queue_track);
-        if(queue_track_raw == undefined || queue_track_raw.length == 0){
-            // queue has ended
-            this.queue_track--;
-            this.state = PlayerState.Stopped;
-            this.audio_player?.stop()
-            this.events?.queue_end()
-            return false;
-        }
-        const queue_track: QueueTrack = JSON.parse(queue_track_raw[0]);
+    public async playAgain(): Promise<boolean>{
+        return true;
+    }
+    public async playPrev(): Promise<boolean>{
+        this.queue_track--;
+        if(this.queue_track < 0) this.queue_track = 0;
+        const queue_track: null|QueueTrack = await this.getQueueTrack();
+        if(!queue_track) return false;
         const soundcloud = new SoundCloud(this.soundcloud_id);
         const fetched_track_array: SoundcloudTrack[]|null = await soundcloud.fetch(queue_track.soundcloud_id);
         if(fetched_track_array == null || fetched_track_array.length == 0) throw new Error('Error while fetching soundcloud track data')
         const stream: SoundcloudStream|null = await soundcloud.stream(fetched_track_array[0]);
         if(stream == null) throw new Error('Error while getting stream from soundcloud track data')
-        this.resource = null;
-        this.resource = createAudioResource(stream.stream, {
-            inputType: stream.type,
-            //inlineVolume: true /// premium feature
-        });
-        this.audio_player?.play(this.resource)
-        this.events?.playing_now(fetched_track_array[0], queue_track.added_by);
-        return true;
+        if(this.playStream(stream)) {
+            this.events?.playing_now(fetched_track_array[0], queue_track.added_by);
+            return true;
+        }
+        return false;
+    }
+    private async playNext(force: boolean = false): Promise<boolean>{
+        if(!force && this.state === PlayerState.Stopped) return false;
+        this.queue_track++;
+        const queue_track: null|QueueTrack = await this.getQueueTrack();
+        if(!queue_track) return true; // we chekced if it was playing at start so it acutally skipped song
+        const soundcloud = new SoundCloud(this.soundcloud_id);
+        const fetched_track_array: SoundcloudTrack[]|null = await soundcloud.fetch(queue_track.soundcloud_id);
+        if(fetched_track_array == null || fetched_track_array.length == 0) throw new Error('Error while fetching soundcloud track data')
+        const stream: SoundcloudStream|null = await soundcloud.stream(fetched_track_array[0]);
+        if(stream == null) throw new Error('Error while getting stream from soundcloud track data')
+        if(this.playStream(stream)) {
+            this.events?.playing_now(fetched_track_array[0], queue_track.added_by);
+            return true;
+        }
+        return false;
     }
     public dispose(): void{
         this.connection.subscription?.unsubscribe();
