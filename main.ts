@@ -135,7 +135,7 @@ export class Player{
             this.disconnect_timeout = setTimeout(() => {
                 this.events?.bot_disc()
                 this.connection.disconnect()
-            }, 1_000 * 3) // 3 minutes
+            }, 60_000 * 3) // 3 minutes
             // trigger event
             this.events?.song_end()
             if(this.state == PlayerState.Stopped) return;
@@ -313,7 +313,6 @@ export async function getSoundcloudId(): Promise<string|null> {
     })
     const js_file = await fetch(links[links.length-1]).then(res => res.text()).catch(err => err)
     if (js_file instanceof Error) throw new Error("Failed to get response from soundcloud.com while getting id: " + res.message);
-    console.log(js_file.split(',client_id:"')[1].split('"')[0])
     return js_file.split(',client_id:"')[1].split('"')[0] || null;
 }
 
