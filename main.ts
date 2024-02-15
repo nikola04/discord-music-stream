@@ -39,6 +39,8 @@ export class Player{
     public soundcloud_id: string;
     public queue_track: number;
     public repeat: Repeat;
+    private auto_shuffle: boolean;
+    private queue_order: number[];
     private connection: RichVoiceConnection;
     private audio_player: AudioPlayer|null;
     private resource: AudioResource|null;
@@ -56,6 +58,8 @@ export class Player{
         this.soundcloud_id = soundcloud_id;
         this.connection = connection;
         this.queue_track = -1;
+        this.queue_order = [];
+        this.auto_shuffle = false;
         this.disconnect_timeout = null;
         this.events = new PlayerEvents();
         this.state = PlayerState.Stopped;
@@ -131,11 +135,13 @@ export class Player{
         const queue_len = await this.queueLen()
         if(queue_len < 1) return false;
         await redis_cli.lTrim(`queue:${this.id}`, queue_len, 0);
+        this.queue_order.length = 0;
         return true;
     }
     private async getQueueTrack(events: boolean = true): Promise<null|QueueTrack>{
         if(!redis_cli) return null;
-        const queue_track_raw: string[] = await redis_cli?.lRange(`queue:${this.id}`, this.queue_track, this.queue_track);
+        const track_id = this.queue_track;//this.queue_order[this.queue_track]
+        const queue_track_raw: string[] = await redis_cli?.lRange(`queue:${this.id}`, track_id, track_id);
         if(queue_track_raw.length == 0 && events){
             // queue has ended
             this.state = PlayerState.Stopped;
@@ -170,6 +176,10 @@ export class Player{
         this.audio_player.stop();
         return true;
     }
+    public shuffle(): boolean{
+        if(this.queue_order.length = 0) return false;
+        return true;
+    }
     public async skip(): Promise<boolean>{
         const queue_len = await this.queueLen()
         if(this.state === PlayerState.Stopped && this.queue_track >= queue_len - 1) return false
@@ -179,10 +189,12 @@ export class Player{
         // adding to queue
         const key: string = `queue:${this.id}`;
         const queue_track: null|QueueTrack = new QueueTrack(track, user);
-        const track_id: number|undefined = await redis_cli?.rPush(key, JSON.stringify(queue_track));
-        // if not playing anything, play added song
+        const tracks: number|undefined = await redis_cli?.rPush(key, JSON.stringify(queue_track));
+        const track_id = (tracks != undefined && tracks > 0) ? (tracks - 1) : 0
+        this.queue_order.push(track_id)
+        // if play is playlist shuffle here
         if(this.state != PlayerState.Stopped) return false;
-        this.queue_track = (track_id != undefined && track_id > 0) ? (track_id - 1) : 0;
+        this.queue_track = track_id; //this.queue_order[track_id];
         return this.playStream(stream)
     }
     private playStream(stream: SoundcloudStream){
