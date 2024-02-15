@@ -5,6 +5,7 @@ export enum ResponseType{
 }
 
 import fs from 'fs';
+const log_file = fs.createWriteStream('requests.log');
 
 /**
  * Fetch function in base and additionally added random user agents
@@ -20,11 +21,14 @@ interface UserAgent{
 }
 export async function anonymRequest(url: URL|string, options: RequestInit, response_type: ResponseType|null = ResponseType.Text){
     try{
-        const response: Response = await fetch(url, options).catch(er => er);
-        if(!response.ok) {
-            console.log(response, response.status)
+        const response: Response = await fetch(url, options).catch(er => {
+            log_file.write(JSON.stringify(er))
+            return er;
+        });
+        if (!response.ok) {
+            log_file.write(`${response.status} ${response.statusText}\n`)
+            return new Error(`${response.status} ${response.statusText}`);
         }
-        if (!response.ok) return new Error(`${response.status} ${response.statusText}`);
         if(response_type == ResponseType.JSON) return await response.json()
         if(response_type == ResponseType.Text) return await response.text()
         return response;

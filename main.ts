@@ -185,14 +185,16 @@ export class Player{
         if(this.state === PlayerState.Stopped && this.queue_track >= queue_len - 1) return false
         return await this.playNext(true)
     }
-    public async play(track: SoundcloudTrack, stream: SoundcloudStream, user: DiscordUser): Promise<boolean>{
+    public async play(tracks: SoundcloudTrack[], stream: SoundcloudStream, user: DiscordUser): Promise<boolean>{
         // adding to queue
         const key: string = `queue:${this.id}`;
-        const queue_track: null|QueueTrack = new QueueTrack(track, user);
-        const tracks: number|undefined = await redis_cli?.rPush(key, JSON.stringify(queue_track));
-        const track_id = (tracks != undefined && tracks > 0) ? (tracks - 1) : 0
-        this.queue_order.push(track_id)
-        // if play is playlist shuffle here
+        const queue_track: null|QueueTrack = new QueueTrack(tracks[0], user);
+        const tracks_num: number|undefined = await redis_cli?.rPush(key, JSON.stringify(queue_track));
+        const track_id = (tracks_num != undefined && tracks_num > 0) ? (tracks_num - 1) : 0
+        //this.queue_order.push(track_id)
+        tracks.shift()
+        const to_push: any[] = tracks.map(track => JSON.stringify(new QueueTrack(track, user)))
+        if(to_push.length > 0) await redis_cli?.rPush(key, to_push);
         if(this.state != PlayerState.Stopped) return false;
         this.queue_track = track_id; //this.queue_order[track_id];
         return this.playStream(stream)
@@ -290,7 +292,7 @@ export class SoundCloud{
     public async fetch(...ids: number[]): Promise<SoundcloudTrack[]|null>{
         if(this.sc_id == null) return null;
         const url = new URL("https://api-v2.soundcloud.com/tracks");
-        const ids_string: string = ids.join('%');
+        const ids_string: string = ids.join(',');
         url.searchParams.set('ids', ids_string);
         url.searchParams.set('client_id', this.sc_id);
         const result = await anonymRequest(url, { method: 'GET' }, ResponseType.JSON);
@@ -307,14 +309,26 @@ export class SoundCloud{
      * @param track_url URL of soundcloud track (E.g. "https://soundcloud.com/we-us/jennifer-lopez-feat-pitbull-on")
      * @returns Fetched SoundcloudTrack object
     **/
-    public async track(track_url: string): Promise<null|SoundcloudTrack>{
+    public async url(track_url: string): Promise<null|SoundcloudTrack[]>{
         if(this.sc_id == null) return null;
         const url = new URL('https://api-v2.soundcloud.com/resolve')
         url.searchParams.set('url', track_url);
         url.searchParams.set('client_id', this.sc_id);
         const response = await anonymRequest(url, { method: 'GET' }, ResponseType.JSON);
         if(response instanceof Error) return null;
-        return new SoundcloudTrack(response);
+        if(response.kind != 'track' && response.kind != 'playlist') throw Error('This url is out of scope');
+        if(response.kind === 'track') return [new SoundcloudTrack(response)]
+        // fetch
+        const tracks: SoundcloudTrack[] = []
+        const to_fetch: number[] = []
+        if(response.tracks.length > 30) response.tracks.length = 30;
+        response.tracks.forEach((track: any) => {
+            if(track.title) return tracks.push(new SoundcloudTrack(track))
+            to_fetch.push(track.id)
+        })
+        const fetched_tracks: null|SoundcloudTrack[] = await this.fetch(...to_fetch);
+        if(!fetched_tracks) return tracks;
+        return [...tracks, ...fetched_tracks];
     }
     /**
      * 
@@ -322,8 +336,8 @@ export class SoundCloud{
      * @param options Optionally provide additional informations. limit -> Number of results (If limit is set to 1, function will return object instead of array). genre -> Genre of tracks for more precise search. 
      * @returns Array of SoundcloudTrack objects or SoundcloudTrack object if limit is set to 1
      */
-    public async search(query: string, options: SearchOptions|null): Promise<SoundcloudTrack[]|SoundcloudTrack|null>{
-        if(query.match(SOUNDCLOUD_URL_REGEX)) return await this.track(query);
+    public async search(query: string, options: SearchOptions|null): Promise<SoundcloudTrack[]|null>{
+        if(query.match(SOUNDCLOUD_URL_REGEX)) return await this.url(query);
         if(this.sc_id == null) return null;
         const url = new URL("https://api-v2.soundcloud.com/search/tracks");
         url.searchParams.set('q', query);
@@ -333,10 +347,7 @@ export class SoundCloud{
         const result = await anonymRequest(url, { method: 'GET' }, ResponseType.JSON);
         if(result instanceof Error || result?.total_results < 1) return null;
         const tracks: SoundcloudTrack[] = [];
-        // if only 1 track is requested
-        if(options?.limit === 1) return new SoundcloudTrack(result?.collection[0]);
-        // else if more that 1
-        result?.collection?.forEach((track:any) => {
+        result?.collection?.forEach((track: any) => {
             const sc_track: SoundcloudTrack = new SoundcloudTrack(track);
             tracks.push(sc_track);
         })
