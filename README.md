@@ -1,5 +1,5 @@
-# DJPatak Player
-Player written for DJPatak Bot.
+ # Disocrd Music Player
+Mainly written for playing music on Discord.
 
 Scrapping data and audio from soundcloud.
 
